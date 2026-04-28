@@ -1,0 +1,122 @@
+ARCUIA Sensor Fusion
+Ryan Breen
+
+════════════════════════════════════════════════════════
+ HARDWARE — SENSOR WIRING (Teensy 4.x)
+════════════════════════════════════════════════════════
+
+IMU (e.g. ICM-42688, BMI088, MPU-6500)
+  SDA / SCL → Teensy I2C pins (18 / 19)
+  Or SPI: CS, MOSI, MISO, SCK → Teensy SPI0 (10-13)
+  Outputs: accel [m/s²], gyro [rad/s]  @ 500 Hz
+
+Magnetometer (e.g. LIS3MDL, QMC5883L)
+  SDA / SCL → same I2C bus as IMU (or second bus)
+  Output: mag [µT]  @ up to 500 Hz (can repeat last reading)
+
+GPS / GNSS (e.g. u-blox M8N, M9N)
+  TX → Teensy Serial1 RX (pin 0)
+  Configure module for UBX-NAV-PVT at 10 Hz, 115200 baud
+  Parse: latitude [deg], longitude [deg], altitude [m],
+         velocity NED [m/s]
+
+Barometer (e.g. BMP388, MS5611)
+  Baro is now computed from the ICAO standard atmosphere model
+  using the filtered altitude — no separate sensor needed unless
+  you want to fuse raw pressure for altitude correction.
+
+════════════════════════════════════════════════════════
+ HOW TO RUN
+════════════════════════════════════════════════════════
+
+1. Open project in VS Code with PlatformIO installed
+2. platformio.ini:
+     [env:teensy41]
+     platform = teensy
+     board = teensy41
+     framework = arduino
+3. In main.cpp:
+     - Create AHRSFilter filter;
+     - Call filter.update(accel, gyro, mag, 0.002f) in a 500 Hz ISR or timer
+     - Call filter.feedGPS(lla, velNED) in your GPS parse callback
+     - Call filter.printCSV() to stream data over USB Serial
+4. Read Serial output in MATLAB or Python visualization
+
+════════════════════════════════════════════════════════
+ FILTER ARCHITECTURE  (AHRSFilter.h / .cpp)
+════════════════════════════════════════════════════════
+
+Two decoupled stages:
+
+  [1] Madgwick AHRS (attitude)
+      - Runs at 500 Hz with every IMU + mag sample
+      - Integrates gyro to propagate quaternion
+      - Gradient descent on accelerometer corrects tilt
+      - Gradient descent on magnetometer corrects yaw/heading
+      - No covariance matrix — very fast, works great on Teensy
+      - Tuning: beta (default 0.033) — lower = smoother, slower
+
+  [2] 6-state EKF (position + velocity)
+      - State:  [px, py, pz, vx, vy, vz]  (NED frame, meters)
+      - Predict (500 Hz):
+            p += v·dt + ½·a_NED·dt²
+            v += a_NED·dt
+          where a_NED = R(q) · a_body + [0, 0, g]
+      - GPS correct (~10 Hz):
+            Sequential scalar Kalman updates for each of 6 measurements
+            (pos North, East, Down, vel North, East, Down)
+            No matrix inversion needed
+
+════════════════════════════════════════════════════════
+ OUTPUT VARIABLES
+════════════════════════════════════════════════════════
+
+pos[3]         NED position [m]        from EKF state
+vel[3]         NED velocity [m/s]      from EKF state
+orient[4]      quaternion [w,x,y,z]    from Madgwick
+
+euler[3]       ZYX Euler [rad]         from quaternion
+               [0] = yaw   (heading)
+               [1] = pitch
+               [2] = roll
+
+heading        yaw in degrees          euler[0] × (180/π), wrapped 0–360
+rollPitch[2]   [pitch_deg, roll_deg]   euler[1,2] × (180/π)
+
+altitude       altitude [ft]           = -pos[2] × 3.28084
+               (NED Down is negative altitude, × ft/m)
+
+climbRate      climb rate [ft/min]     = -vel[2] × 196.85
+               (NED Down velocity, negative = climbing)
+
+airspeed       airspeed [knots]        = √(vx²+vy²+vz²) × 1.944
+               (|vel| in m/s → knots)
+
+baroPressure   pressure [Pa]           ICAO 1976 Standard Atmosphere
+               Troposphere  (0–11 km): P = 101325 × (1 − 2.256×10⁻⁵h)^5.256
+               Tropopause (11–20 km):  P = 22632  × exp(−1.577×10⁻⁴·(h−11000))
+               Stratosphere (20–32 km): P = 5475  × (1 + 4.616×10⁻⁶·(h−20000))^−34.16
+
+════════════════════════════════════════════════════════
+ SERIAL OUTPUT (CSV, 20 columns, 500 Hz)
+════════════════════════════════════════════════════════
+
+px, py, pz, vx, vy, vz,
+qw, qx, qy, qz,
+altitude_ft, climbrate_ftmin, airspeed_kts, heading_deg,
+pitch_deg, roll_deg,
+yaw_rad, pitch_rad, roll_rad,
+baro_pa
+
+════════════════════════════════════════════════════════
+ SIMULATION (MATLAB — trajectory.m / visualize.m)
+════════════════════════════════════════════════════════
+
+RUN TRAJECTORY → generates ground truth + noisy sensor signals
+RUN SIMULINK   → runs arcsensors.slx using workspace signals
+RUN VISUALIZE  → plots HUD: 3D trajectory, vel, accel, orientation,
+                 ground track, and live readout panel
+
+The C++ filter replaces the Simulink insfilterAsync block for
+hardware deployment. The math is identical — only the interface
+changes from MATLAB workspace variables to live sensor bytes.

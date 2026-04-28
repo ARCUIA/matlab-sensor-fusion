@@ -1,0 +1,104 @@
+MATLAB Simulink Project
+ARCUIA
+Ryan Breen
+
+how it works:
+RUN TRAJECTORY 
+RUN SIMULINK
+RUN VISUALIZE
+
+Sensors
+accelerometer acceleration m/s^2
+gyro rad/s (convert from deg/s)
+(x, y, z for both) + other parameters if necessary
+- Outputs acceleration & gyro vectors
+Clock included for timestamp
+
+magnometer microtesla (mu T)
+Input mag vector (x, y, z), calibration
+Output mag vector & timestamp if needed
+- Finds absolute yaw (heading) corrects altitude
+
+GPS/GNSS reciever position m/s (ENU/NED convert)
+Input GNSS data stream, antenna status, configuration
+Output (x,y,z lat/long), velocity, fix status & timestamp
+
+PPS/1PPS pulse/s
+gives pulses per second for timestamp alignemnt
+Input hardware interrupt pin
+Output precise timestamp events and sunc signals from other sensors
+Syncrhonize hardware from asynchronized sensors
+
+Barometer pressure Pa
+converted to altitude in m
+Input raw pressure reading, temp
+Output altitude, barometric pressure (Pa) and a timestamp
+
+Pitot/Airspeed sensor (Pa -> airspeed in m/s)
+Inputs pitot pressure, static pressure, temp
+Outputs calibrated airspeed in and a timestamp
+Function to convert the barometer data into a target airspeed
+Navigation and Control
+
+- At this point we have altitude, timestamps, airspeed, 
+direction of acceleration, yaw, pressure, and location
+
+- We still need temp & video. Along with that, there are a
+couple of other sensors that could be added:
+
+External Heading Source (high precision position, m, rad)
+Wheel Encoders or Speed Sensors (velocity, timestamps)
+External triggers to coordinate asynchronous events
+^^Not included because I do not know if they are applicable
+
+Important Notes:
+-always include timestamp with each sensor output as a baseline
+-make sure you have the correct units, sometimes you have
+to convert, typically degrees to radians or NED vs ENU for the gps
+-conversions can be done with the matlab function block and you code it
+
+start/stop time set to 10s for simulation, extend for real launch
+
+current wiring
+IMU
+Accel -> filter and ahrs
+Gyro -> filter and ahrs
+Mag -> filter and ahrs
+
+AHRS
+orientation -> filter
+
+GPS
+LLA -> filter
+Velocity -> filter
+
+Clock
+time -> filter
+
+annotation for filter purpose added
+
+From Workspace: 
+-This is used to simulate numbers and provide a ground truth
+when I do not have actual sensors feeding the data in.
+
+run trajectory script for ground truths
+type "trajectory" into terminal to do so
+after running, type "whos" into terminal
+-checks values
+
+
+Final Notes:
+-Set sample time, removed clock, just put dt as a variable
+-Going to add 3d model
+-Graphs look good but currently have no noise so I need to
+see how it is with hardware and see if they still look good
+-AHRS filter redundant, but can validate the main filter if gps
+messes up
+
+
+To speed up program:
+rapid accelerator mode for compiling
+use external mode instead of post processing
+replace coder.extrinsic calls with inline math
+reduce solver step size? althoguh I dont know if i can
+fixed step solver, already doing
